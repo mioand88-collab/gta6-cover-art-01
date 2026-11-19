@@ -1,18 +1,19 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Vice Heat — Cover Maker</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="topbar">
   <div class="brand">
-    <span class="brand-mark" aria-hidden="true">VH</span>
+    <span class="logo" aria-hidden="true">VH</span>
     <div class="brand-text">
-      <h1>Vice Heat &mdash; Cover Maker</h1>
-      <p>Your photo, a caption, and the full multi-panel poster treatment. Everything happens on this machine &mdash; nothing is uploaded.</p>
+      <h1>Vice Heat — Cover Maker</h1>
+      <p>Your photo, a caption, and the full multi-panel poster treatment. Everything happens on this machine — nothing is uploaded.</p>
     </div>
   </div>
   <div class="top-actions">
@@ -22,16 +23,16 @@
 </header>
 
 <main class="workspace">
-  <section class="stage-column" aria-label="Cover preview">
-    <div class="stage-frame">
-      <canvas id="stageCanvas" width="864" height="1080" aria-label="Live cover preview. Click a panel to select it."></canvas>
+  <section class="stage" aria-label="Cover preview">
+    <div class="canvas-wrap">
+      <canvas id="posterCanvas" width="864" height="1080"></canvas>
     </div>
-    <p class="stage-hint">Click a panel to select it. Drag inside a panel to reposition its photo. Press <kbd>Delete</kbd> to clear the selected panel back to its backdrop.</p>
+    <p class="hint">Click a panel to select it. Drag inside a panel to reposition its photo. Press <kbd>Delete</kbd> to clear the selected panel back to its backdrop.</p>
   </section>
 
   <aside class="controls" aria-label="Cover controls">
-    <section class="card" aria-labelledby="layoutHeading">
-      <h2 id="layoutHeading">Layout</h2>
+    <section class="card">
+      <h2>Layout</h2>
       <div class="chip-row" id="layoutRow" role="group" aria-label="Panel layout">
         <button type="button" class="chip is-active" data-layout="classic">Classic collage</button>
         <button type="button" class="chip" data-layout="triptych">Triptych</button>
@@ -40,81 +41,95 @@
       </div>
     </section>
 
-    <section class="card" aria-labelledby="panelHeading">
-      <h2 id="panelHeading">Selected panel</h2>
-      <p class="panel-summary" id="panelSummary">Panel 1 &mdash; Hero &middot; backdrop: Sunset Beach</p>
-      <div class="button-row">
-        <button id="loadPhotoBtn" class="btn btn-soft" type="button">Load photo&hellip;</button>
+    <section class="card">
+      <h2>Selected panel</h2>
+      <p class="panel-status" id="panelStatus">Panel 3 — Bottom right · backdrop: Palm Dusk</p>
+      <div class="btn-row">
+        <button id="loadPhotoBtn" class="btn btn-soft" type="button">Load photo…</button>
         <button id="swapBackdropBtn" class="btn btn-soft" type="button">Swap backdrop</button>
-      </div>
-      <div class="button-row">
         <button id="clearPhotoBtn" class="btn btn-soft" type="button">Clear photo</button>
       </div>
-      <label class="slider-label" for="zoomSlider">Photo zoom</label>
-      <input id="zoomSlider" type="range" min="100" max="300" value="100" step="1">
-      <label class="slider-label" for="shiftXSlider">Photo shift X</label>
-      <input id="shiftXSlider" type="range" min="-100" max="100" value="0" step="1">
-      <label class="slider-label" for="shiftYSlider">Photo shift Y</label>
-      <input id="shiftYSlider" type="range" min="-100" max="100" value="0" step="1">
+      <label class="slider-row"><span>Photo zoom</span>
+        <input id="zoomSlider" type="range" min="1" max="3" step="0.01" value="1">
+      </label>
+      <label class="slider-row"><span>Photo shift X</span>
+        <input id="shiftXSlider" type="range" min="-0.5" max="0.5" step="0.01" value="0">
+      </label>
+      <label class="slider-row"><span>Photo shift Y</span>
+        <input id="shiftYSlider" type="range" min="-0.5" max="0.5" step="0.01" value="0">
+      </label>
+      <input id="photoInput" type="file" accept="image/*" hidden>
     </section>
 
-    <section class="card" aria-labelledby="gradeHeading">
-      <h2 id="gradeHeading">Colour grade</h2>
+    <section class="card">
+      <h2>Colour grade</h2>
       <div class="chip-row" id="gradeRow" role="group" aria-label="Colour grade">
-        <button type="button" class="chip is-active" data-grade="sunset">Vice Sunset</button>
+        <button type="button" class="chip is-active" data-grade="vice">Vice Sunset</button>
         <button type="button" class="chip" data-grade="neon">Neon Nights</button>
-        <button type="button" class="chip" data-grade="dusk">Palm Dusk</button>
+        <button type="button" class="chip" data-grade="palm">Palm Dusk</button>
         <button type="button" class="chip" data-grade="golden">Golden Hour</button>
       </div>
-      <label class="slider-label" for="gradeSlider">Grade intensity</label>
-      <input id="gradeSlider" type="range" min="0" max="100" value="85" step="1">
+      <label class="slider-row"><span>Grade intensity</span>
+        <input id="gradeSlider" type="range" min="0" max="1" step="0.01" value="0.7">
+      </label>
     </section>
 
-    <section class="card" aria-labelledby="captionHeading">
-      <h2 id="captionHeading">Caption</h2>
-      <label class="slider-label" for="captionInput">Main caption</label>
-      <input id="captionInput" class="text-input" type="text" value="VICE HEAT" maxlength="24" spellcheck="false">
-      <label class="slider-label" for="subCaptionInput">Sub-caption</label>
-      <input id="subCaptionInput" class="text-input" type="text" value="NEON NIGHTS &bull; PALM CITY" maxlength="48" spellcheck="false">
+    <section class="card">
+      <h2>Caption</h2>
+      <label class="field"><span>Main caption</span>
+        <input id="captionInput" type="text" value="VICE HEAT" maxlength="24" autocomplete="off">
+      </label>
+      <label class="field"><span>Sub-caption</span>
+        <input id="subCaptionInput" type="text" value="NEON NIGHTS • PALM CITY" maxlength="48" autocomplete="off">
+      </label>
       <div class="chip-row" id="captionStyleRow" role="group" aria-label="Caption style">
         <button type="button" class="chip is-active" data-caption-style="sunset">Sunset</button>
         <button type="button" class="chip" data-caption-style="chrome">Chrome</button>
         <button type="button" class="chip" data-caption-style="neon">Neon</button>
         <button type="button" class="chip" data-caption-style="paper">Paper</button>
       </div>
-      <label class="slider-label" for="captionPlaceRow">Caption placement</label>
       <div class="chip-row" id="captionPlaceRow" role="group" aria-label="Caption placement">
-        <button type="button" class="chip is-active" data-caption-place="bottom">Bottom</button>
-        <button type="button" class="chip" data-caption-place="top">Top</button>
+        <button type="button" class="chip is-active" data-placement="bottom">Bottom</button>
+        <button type="button" class="chip" data-placement="top">Top</button>
       </div>
     </section>
 
-    <section class="card" aria-labelledby="frameHeading">
-      <h2 id="frameHeading">Frame</h2>
-      <div class="chip-row" id="frameRow" role="group" aria-label="Panel frame style">
+    <section class="card">
+      <h2>Frame</h2>
+      <div class="chip-row" id="frameRow" role="group" aria-label="Frame style">
         <button type="button" class="chip is-active" data-frame="white">White</button>
         <button type="button" class="chip" data-frame="neon">Neon glow</button>
         <button type="button" class="chip" data-frame="dark">Dark</button>
         <button type="button" class="chip" data-frame="none">None</button>
       </div>
-      <label class="slider-label" for="frameWidthSlider">Frame width</label>
-      <input id="frameWidthSlider" type="range" min="0" max="28" value="9" step="1">
+      <label class="slider-row"><span>Frame width</span>
+        <input id="frameWidthSlider" type="range" min="0" max="32" step="1" value="8">
+      </label>
     </section>
 
-    <section class="card" aria-labelledby="exportHeading">
-      <h2 id="exportHeading">Export PNG</h2>
-      <div class="chip-row" id="sizeRow" role="group" aria-label="Export size">
-        <button type="button" class="chip is-active" data-size="1080x1350">1080 &times; 1350</button>
-        <button type="button" class="chip" data-size="1080x1080">1080 &times; 1080</button>
-        <button type="button" class="chip" data-size="1920x1080">1920 &times; 1080</button>
+    <section class="card">
+      <h2>Finishing</h2>
+      <label class="slider-row"><span>Vignette</span>
+        <input id="vignetteSlider" type="range" min="0" max="100" step="1" value="35">
+      </label>
+      <p class="note">Darkens the cover's edges so the caption pops — slide to 0 for a flat, bright poster.</p>
+    </section>
+
+    <section class="card">
+      <h2>Export PNG</h2>
+      <div class="chip-row" id="exportRow" role="group" aria-label="Export size">
+        <button type="button" class="chip is-active" data-size="1080x1350">1080 × 1350</button>
+        <button type="button" class="chip" data-size="1080x1080">1080 × 1080</button>
+        <button type="button" class="chip" data-size="1920x1080">1920 × 1080</button>
       </div>
-      <button id="exportBtn" class="btn btn-warm btn-wide" type="button">Download cover PNG</button>
-      <p class="status-line" id="statusLine" role="status">Ready. Load a photo into a panel, or export the cover as it is.</p>
+      <div class="btn-row export-actions">
+        <button id="exportBtn" class="btn btn-warm" type="button">Export PNG</button>
+      </div>
+      <p class="status" id="statusLine">Ready — pick a panel and load a photo, or export the cover as it is.</p>
     </section>
   </aside>
 </main>
 
-<input id="filePicker" type="file" accept="image/*" hidden>
 <script src="app.js"></script>
 </body>
 </html>

@@ -34,14 +34,16 @@ No build step, no dependencies, no network requests.
   canvas artwork: Sunset Beach, Neon Strip, Palm Dusk and Skyline scenes
   with striped suns, palm silhouettes and lit skylines.
 - **Colour grades** — Vice Sunset, Neon Nights, Palm Dusk and Golden Hour
-  presets (tint overlays plus a vignette) with an intensity slider, applied
-  live and baked into the export.
+  presets (tint overlays) with an intensity slider, applied live and baked
+  into the export.
 - **Caption lettering** — editable main caption and sub-caption in heavy
   condensed lettering with outline and shadow, four colour styles (Sunset,
   Chrome, Neon, Paper), auto-fitted to the cover width. The caption can sit
   at the bottom or the top of the cover.
 - **Frame** — panel borders in White, Neon glow, Dark or None, with a
   width slider.
+- **Finishing** — a Vignette slider darkens the cover's edges so the caption
+  pops; slide it to 0 for a flat, bright poster.
 - **Exports** — one click renders the cover offscreen at full size:
   1080 × 1350, 1080 × 1080 or 1920 × 1080 PNG.
 - **Fast by default** — a finished composition is already arranged when the
@@ -53,23 +55,27 @@ No build step, no dependencies, no network requests.
 
 `main.ts` (Node 22, standard library only) copies `app/` and `screenshots/`
 to the output directory and writes `dossier.json` with the vendored
-make.fun library in `vendor/`. It first checks that `app/` and
-`screenshots/` exist and are non-empty, then rebuilds the dossier from the
-output and compares it byte for byte, printing a short summary:
+make.fun library in `vendor/`. Before copying it checks that `app/` and
+`screenshots/` exist and are non-empty, that the screenshots number 3–4
+and each is at most 256 KiB, that `app/index.html` is at most 1 MiB, and
+that `app/` stays within 993 entries and 48 MiB; it then rebuilds the
+dossier from the output and compares it byte for byte, printing a short
+summary:
 
 ```
 mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 ```
 
-## Round 2
+## Round 3
 
-This revision was rebuilt in a fresh recorded session after the round-1
-entry was rejected by the transcript gate: `app/index.html`, `app/style.css`
-and `app/app.js` were rewritten from scratch in-session, `main.ts` gained
-the validation and dossier-rebuild checks above (edited in two rounds with
+This revision was rebuilt in a fresh recorded session after the round-2
+entry's recording was poisoned by a stale concurrent worker session and the
+site refused to accept it: `app/index.html`, `app/style.css` and
+`app/app.js` were rewritten from scratch in-session, `main.ts` gained the
+screenshot, index.html and app-size checks above (edited in two rounds with
 a program run in between), and this README was rewritten too. The app keeps
-the round-1 default look — same classic collage, grade, caption and
-backdrops — and adds the caption-placement and frame controls.
+the round-2 default look — same classic collage, grade, caption, frame and
+backdrops — and adds the vignette finishing control.
 
 ## License
 

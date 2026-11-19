@@ -33,6 +33,39 @@ const appEntries = requireNonEmptyDir('app', join(here, 'app'));
 const shotEntries = requireNonEmptyDir('screenshots', join(here, 'screenshots'));
 console.log(`checked app/ (${appEntries} entries) and screenshots/ (${shotEntries} entries)`);
 
+// Round 3 validation: the gate's own caps for the screenshots and the page.
+// screenshots/ holds 3 to 4 images, each at most 256 KiB, and app/index.html
+// is a regular file of at most 1 MiB. Refuse the hand-in here, with the
+// offending file named, instead of letting the scorer refuse it.
+import { statSync } from 'node:fs';
+const SHOT_MAX_COUNT = 4;
+const SHOT_MIN_COUNT = 3;
+const SHOT_MAX_BYTES = 262144;
+const INDEX_MAX_BYTES = 1048576;
+function requireGateSizedFiles() {
+  const shotDir = join(here, 'screenshots');
+  const shots = readdirSync(shotDir).filter((n) => !n.startsWith('.'));
+  if (shots.length < SHOT_MIN_COUNT || shots.length > SHOT_MAX_COUNT) {
+    throw new Error(`screenshots/ holds ${shots.length} images, need ${SHOT_MIN_COUNT}-${SHOT_MAX_COUNT}`);
+  }
+  for (const name of shots) {
+    const size = statSync(join(shotDir, name)).size;
+    if (size > SHOT_MAX_BYTES) {
+      throw new Error(`screenshot ${name} is ${size} bytes, over the 256 KiB cap`);
+    }
+  }
+  const indexPath = join(here, 'app', 'index.html');
+  if (!existsSync(indexPath) || !statSync(indexPath).isFile()) {
+    throw new Error(`missing app/index.html: ${indexPath}`);
+  }
+  const indexSize = statSync(indexPath).size;
+  if (indexSize > INDEX_MAX_BYTES) {
+    throw new Error(`app/index.html is ${indexSize} bytes, over the 1 MiB cap`);
+  }
+  console.log(`checked ${shots.length} screenshots (each at most 256 KiB) and app/index.html (${indexSize} bytes)`);
+}
+requireGateSizedFiles();
+
 mkdirSync(out, { recursive: true });
 cpSync(join(here, 'app'), join(out, 'app'), { recursive: true });
 mkdirSync(join(out, 'screenshots'), { recursive: true });
@@ -40,8 +73,33 @@ if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), joi
 
 // The scorer's own caps (reference/gate.json): only text_max_bytes shapes the bytes; the others refuse an entry the
 // scorer would refuse (more than 4 screenshots or one over 256 KiB; more than 993 files in app/ or 48 MiB of app
-// files, in all, or a path under app/ over 1000 bytes: app/ counts beside /output's own 1000-entry cap, its
-// screenshots/ and dossier.json).
+// Round 3 validation, continued: the gate also caps app/ itself at 993
+// files and directories together and 48 MiB in all. Count both before the
+// dossier is written so an overgrown app/ fails here, naming the totals.
+function requireAppWithinCaps() {
+  const APP_MAX_ENTRIES = 993;
+  const APP_MAX_BYTES = 50331648;
+  let entries = 0;
+  let bytes = 0;
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      entries += 1;
+      const p = join(dir, entry.name);
+      if (entry.isDirectory()) walk(p);
+      else bytes += statSync(p).size;
+    }
+  };
+  walk(join(here, 'app'));
+  if (entries > APP_MAX_ENTRIES) {
+    throw new Error(`app/ holds ${entries} entries, over the 993 cap`);
+  }
+  if (bytes > APP_MAX_BYTES) {
+    throw new Error(`app/ totals ${bytes} bytes, over the 48 MiB cap`);
+  }
+  console.log(`checked app/ totals: ${entries} entries, ${bytes} bytes`);
+}
+requireAppWithinCaps();
+
 writeFileSync(
   join(out, 'dossier.json'),
   buildDossier(out, {
