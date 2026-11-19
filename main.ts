@@ -19,6 +19,20 @@ import { buildDossier } from './vendor/makefun-app.ts';
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
+// Round 2 validation: refuse to hand in an empty or missing app/ or
+// screenshots/ instead of silently copying nothing. Both directories must
+// exist beside this file and hold at least one entry each.
+import { readdirSync } from 'node:fs';
+function requireNonEmptyDir(label, dir) {
+  if (!existsSync(dir)) throw new Error(`missing ${label} directory: ${dir}`);
+  const names = readdirSync(dir);
+  if (names.length === 0) throw new Error(`empty ${label} directory: ${dir}`);
+  return names.length;
+}
+const appEntries = requireNonEmptyDir('app', join(here, 'app'));
+const shotEntries = requireNonEmptyDir('screenshots', join(here, 'screenshots'));
+console.log(`checked app/ (${appEntries} entries) and screenshots/ (${shotEntries} entries)`);
+
 mkdirSync(out, { recursive: true });
 cpSync(join(here, 'app'), join(out, 'app'), { recursive: true });
 mkdirSync(join(out, 'screenshots'), { recursive: true });
@@ -38,3 +52,28 @@ writeFileSync(
     app_path_max_bytes: 1000,
   }),
 );
+
+// Round 2 verification: rebuild the dossier from the output just written and
+// compare it byte for byte with the file on disk, then print a short summary.
+import { readFileSync } from 'node:fs';
+const dossierPath = join(out, 'dossier.json');
+const writtenDossier = readFileSync(dossierPath);
+const rebuiltDossier = buildDossier(out, {
+  text_max_bytes: 163840,
+  screenshots: { max: 4, max_bytes: 262144 },
+  app_max_files: 993,
+  app_max_bytes: 50331648,
+  app_path_max_bytes: 1000,
+});
+if (!writtenDossier.equals(Buffer.from(rebuiltDossier))) {
+  throw new Error('dossier.json does not match a fresh rebuild');
+}
+function countFiles(dir) {
+  let total = 0;
+  for (const name of readdirSync(dir, { withFileTypes: true })) {
+    total += name.isDirectory() ? countFiles(join(dir, name)) : 1;
+  }
+  return total;
+}
+const copiedFiles = countFiles(join(out, 'app')) + countFiles(join(out, 'screenshots'));
+console.log(`handed in ${copiedFiles} files; dossier.json is ${writtenDossier.length} bytes and matches its rebuild`);

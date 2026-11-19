@@ -1,687 +1,970 @@
 /* Vice Heat — Cover Maker.
-   An offline multi-panel poster maker: load a photo into any panel, pick a
-   layout, grade it like a neon sunset, stamp a bold caption, export a PNG.
-   Everything is drawn on canvas from the files in this folder. No network. */
-'use strict';
+   A fully offline, single-file cover art app: pick a panel layout, drop a photo
+   into any panel, choose a colour grade and a caption, export a PNG poster.
+   Every backdrop is drawn with canvas paths — no image files, no network. */
 
-/* ---------- small deterministic random (backdrops look the same every load) ---------- */
-function seededRandom(seed) {
-  let s = seed >>> 0;
-  return function () {
-    s = (s * 1664525 + 1013904223) >>> 0;
-    return s / 4294967296;
-  };
-}
+(function () {
+  'use strict';
 
-/* ---------- layouts: panel rectangles as fractions of the cover ---------- */
-const LAYOUTS = {
-  classic: {
-    label: 'Classic collage',
-    panels: [
-      { name: 'Hero', rect: [0, 0, 0.60, 1] },
-      { name: 'Top right', rect: [0.60, 0, 0.40, 0.56] },
-      { name: 'Bottom right', rect: [0.60, 0.56, 0.40, 0.44] },
-    ],
-  },
-  triptych: {
-    label: 'Triptych',
-    panels: [
-      { name: 'Left', rect: [0, 0, 1 / 3, 1] },
-      { name: 'Centre', rect: [1 / 3, 0, 1 / 3, 1] },
-      { name: 'Right', rect: [2 / 3, 0, 1 / 3, 1] },
-    ],
-  },
-  duo: {
-    label: 'Duo',
-    panels: [
-      { name: 'Left', rect: [0, 0, 0.52, 1] },
-      { name: 'Right', rect: [0.52, 0, 0.48, 1] },
-    ],
-  },
-  single: {
-    label: 'Single hero',
-    panels: [{ name: 'Hero', rect: [0, 0, 1, 1] }],
-  },
-};
-
-/* ---------- colour grades ---------- */
-const GRADES = {
-  vice: { label: 'Vice Sunset', top: [88, 20, 140], mid: [255, 77, 141], bottom: [255, 122, 48], sat: 0.65, con: 0.20 },
-  neon: { label: 'Neon Nights', top: [8, 10, 70], mid: [57, 213, 232], bottom: [255, 45, 150], sat: 0.45, con: 0.30 },
-  dusk: { label: 'Palm Dusk', top: [0, 66, 88], mid: [64, 178, 160], bottom: [255, 158, 84], sat: 0.35, con: 0.14 },
-  gold: { label: 'Golden Hour', top: [120, 60, 10], mid: [255, 176, 66], bottom: [214, 90, 30], sat: 0.40, con: 0.12 },
-};
-
-/* ---------- caption lettering styles ---------- */
-const LETTER_STYLES = {
-  sunset: { stops: ['#ffe259', '#ffa751', '#ff4d8d'], stroke: '#2a0a3a', sub: '#ffd23d' },
-  chrome: { stops: ['#ffffff', '#c9d4e8', '#5d6f92'], stroke: '#0a0a14', sub: '#e8eefc' },
-  neon: { stops: ['#b8fbff', '#39d5e8', '#ff4dd2'], stroke: '#12002e', sub: '#7df9ff' },
-  paper: { stops: ['#fff6e3', '#ffe9bd', '#ffd9a0'], stroke: '#40160a', sub: '#ffffff' },
-};
-
-const BACKDROPS = ['sunset-beach', 'neon-strip', 'palm-dusk', 'skyline'];
-const BACKDROP_NAMES = {
-  'sunset-beach': 'Sunset Beach',
-  'neon-strip': 'Neon Strip',
-  'palm-dusk': 'Palm Dusk',
-  'skyline': 'Skyline',
-};
-const CAPTION_FONT = '"Arial Narrow", "Liberation Sans Narrow", Impact, "Helvetica Neue", sans-serif';
-
-/* ---------- state ---------- */
-function freshPanel(backdrop) {
-  return { img: null, backdrop, zoom: 1, ox: 0, oy: 0 };
-}
-function defaultState() {
-  return {
-    layout: 'classic',
-    grade: 'vice',
-    intensity: 0.7,
-    letter: 'sunset',
-    caption: 'VICE HEAT',
-    subcaption: 'NEON NIGHTS • PALM CITY',
-    selected: 0,
-    panels: [freshPanel('sunset-beach'), freshPanel('neon-strip'), freshPanel('palm-dusk')],
-  };
-}
-let state = defaultState();
-let aspect = { w: 1080, h: 1350 };
-
-/* ---------- backdrop painting (the app's own artwork for empty panels) ---------- */
-function skyGradient(ctx, x, y, w, h, stops) {
-  const g = ctx.createLinearGradient(0, y, 0, y + h);
-  for (const [at, col] of stops) g.addColorStop(at, col);
-  ctx.fillStyle = g;
-  ctx.fillRect(x, y, w, h);
-}
-
-function stripedSun(ctx, cx, cy, r, topCol, botCol) {
-  const g = ctx.createLinearGradient(0, cy - r, 0, cy + r);
-  g.addColorStop(0, topCol);
-  g.addColorStop(1, botCol);
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.clip();
-  ctx.fillStyle = g;
-  ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
-  ctx.fillStyle = 'rgba(20,6,40,0.85)';
-  let gap = r * 0.06;
-  for (let yy = cy + r * 0.08; yy < cy + r; yy += gap * 2.1) {
-    ctx.fillRect(cx - r, yy, r * 2, gap);
-    gap *= 1.35;
+  /* ---------- Small deterministic random helper ----------
+     Backdrops sprinkle stars, sea sparkles and lit windows. A seeded
+     generator keeps the preview and the exported PNG identical. */
+  function mulberry32(seed) {
+    var a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
   }
-  ctx.restore();
-}
 
-function skyline(ctx, x, yBase, w, hMax, seed, colour, litCol, litChance) {
-  const rnd = seededRandom(seed);
-  ctx.fillStyle = colour;
-  let bx = x;
-  while (bx < x + w) {
-    const bw = w * (0.05 + rnd() * 0.09);
-    const bh = hMax * (0.3 + rnd() * 0.7);
-    ctx.fillRect(bx, yBase - bh, bw, bh);
-    if (rnd() > 0.6) ctx.fillRect(bx + bw * 0.3, yBase - bh - hMax * 0.08, bw * 0.4, hMax * 0.08);
-    if (litCol) {
-      ctx.fillStyle = litCol;
-      const cols = Math.max(1, Math.floor(bw / (w * 0.03)));
-      const rows = Math.max(2, Math.floor(bh / (hMax * 0.14)));
-      for (let c = 0; c < cols; c++) {
-        for (let r = 0; r < rows; r++) {
-          if (rnd() < litChance) {
-            ctx.globalAlpha = 0.5 + rnd() * 0.5;
-            ctx.fillRect(bx + (c + 0.5) * (bw / cols) - w * 0.006, yBase - bh + (r + 0.5) * (bh / rows), w * 0.012, hMax * 0.05);
-          }
-        }
+  function clamp(value, low, high) {
+    return value < low ? low : value > high ? high : value;
+  }
+
+  /* ---------- Catalogues ---------- */
+
+  var LAYOUTS = {
+    classic:  { label: 'Classic collage', panels: ['Hero', 'Top right', 'Bottom right'] },
+    triptych: { label: 'Triptych',        panels: ['Left', 'Centre', 'Right'] },
+    duo:      { label: 'Duo',             panels: ['Left', 'Right'] },
+    single:   { label: 'Single hero',     panels: ['Cover'] }
+  };
+
+  var BACKDROP_ORDER = ['beach', 'neon', 'palm', 'skyline'];
+  var BACKDROP_LABELS = {
+    beach:   'Sunset Beach',
+    neon:    'Neon Strip',
+    palm:    'Palm Dusk',
+    skyline: 'Skyline'
+  };
+
+  var GRADES = {
+    sunset: { label: 'Vice Sunset', top: 'rgba(255, 64, 128, 1)', bottom: 'rgba(255, 150, 40, 1)', strength: 0.55 },
+    neon:   { label: 'Neon Nights', top: 'rgba(64, 40, 255, 1)',  bottom: 'rgba(255, 43, 214, 1)', strength: 0.62 },
+    dusk:   { label: 'Palm Dusk',   top: 'rgba(120, 40, 200, 1)', bottom: 'rgba(255, 90, 120, 1)', strength: 0.5 },
+    golden: { label: 'Golden Hour', top: 'rgba(255, 190, 60, 1)', bottom: 'rgba(255, 110, 30, 1)', strength: 0.5 }
+  };
+
+  var CAPTION_STYLES = {
+    sunset: { label: 'Sunset', stops: ['#ffd23d', '#ff7a5e', '#ff3d7e', '#ff2e7e'], outline: '#2a0a33' },
+    chrome: { label: 'Chrome', stops: ['#ffffff', '#dfe6f2', '#9aa7bd', '#e8eef7'], outline: '#232838' },
+    neon:   { label: 'Neon',   stops: ['#7df9ff', '#35e0ff', '#ff2bd6', '#b04df0'], outline: '#12082e' },
+    paper:  { label: 'Paper',  stops: ['#ffffff', '#ffffff', '#f2eef7', '#ffffff'], outline: '#241533' }
+  };
+
+  var EXPORT_SIZES = {
+    '1080x1350': { w: 1080, h: 1350 },
+    '1080x1080': { w: 1080, h: 1080 },
+    '1920x1080': { w: 1920, h: 1080 }
+  };
+
+  var FRAME_STYLES = {
+    white: { label: 'White',     fill: '#f2eef7' },
+    neon:  { label: 'Neon glow', fill: null }, /* gradient, built per render */
+    dark:  { label: 'Dark',      fill: '#17102e' },
+    none:  { label: 'None',      fill: '#0f0a22' }
+  };
+
+  /* ---------- State ---------- */
+
+  function freshPanels() {
+    return [
+      { backdrop: 'beach',   photo: null },
+      { backdrop: 'neon',    photo: null },
+      { backdrop: 'palm',    photo: null }
+    ];
+  }
+
+  function defaultState() {
+    return {
+      layout: 'classic',
+      grade: 'sunset',
+      gradeIntensity: 0.85,
+      caption: 'VICE HEAT',
+      subCaption: 'NEON NIGHTS \u2022 PALM CITY',
+      captionStyle: 'sunset',
+      captionPlace: 'bottom',
+      frame: 'white',
+      frameWidth: 9,
+      exportSize: '1080x1350',
+      selected: 0,
+      panels: freshPanels()
+    };
+  }
+
+  var state = defaultState();
+
+  /* ---------- DOM ---------- */
+
+  function $(id) { return document.getElementById(id); }
+
+  var stage = $('stageCanvas');
+  var stageCtx = stage.getContext('2d');
+  var statusLine = $('statusLine');
+  var panelSummary = $('panelSummary');
+  var filePicker = $('filePicker');
+  var zoomSlider = $('zoomSlider');
+  var shiftXSlider = $('shiftXSlider');
+  var shiftYSlider = $('shiftYSlider');
+  var gradeSlider = $('gradeSlider');
+  var frameWidthSlider = $('frameWidthSlider');
+  var captionInput = $('captionInput');
+  var subCaptionInput = $('subCaptionInput');
+
+  function setStatus(text) { statusLine.textContent = text; }
+
+  /* ---------- Panel geometry ---------- */
+
+  function panelRectsFor(layout, W, H, gap) {
+    var rects = [];
+    if (layout === 'classic') {
+      var innerW = W - 3 * gap;
+      var heroW = innerW * 0.57;
+      var rightW = innerW - heroW;
+      var rightX = gap + heroW + gap;
+      var innerH = H - 3 * gap;
+      var topH = innerH * 0.53;
+      var botH = innerH - topH;
+      rects.push({ x: gap, y: gap, w: heroW, h: H - 2 * gap });
+      rects.push({ x: rightX, y: gap, w: rightW, h: topH });
+      rects.push({ x: rightX, y: gap + topH + gap, w: rightW, h: botH });
+    } else if (layout === 'triptych') {
+      var colW = (W - 4 * gap) / 3;
+      for (var i = 0; i < 3; i++) {
+        rects.push({ x: gap + i * (colW + gap), y: gap, w: colW, h: H - 2 * gap });
       }
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = colour;
+    } else if (layout === 'duo') {
+      var duoW = (W - 3 * gap) / 2;
+      rects.push({ x: gap, y: gap, w: duoW, h: H - 2 * gap });
+      rects.push({ x: gap + duoW + gap, y: gap, w: duoW, h: H - 2 * gap });
+    } else {
+      rects.push({ x: gap, y: gap, w: W - 2 * gap, h: H - 2 * gap });
     }
-    bx += bw + w * 0.008;
+    return rects;
   }
-}
 
-function palmTree(ctx, x, y, scale, flip, colour) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(flip * scale, scale);
-  ctx.fillStyle = colour;
-  ctx.strokeStyle = colour;
-  ctx.lineCap = 'round';
-  // trunk: a leaning stack of segments
-  let px = 0, py = 0;
-  const lean = 0.16;
-  for (let i = 0; i < 9; i++) {
-    const wdt = 13 - i * 1.05;
-    ctx.beginPath();
-    ctx.arc(px, py, wdt / 2, 0, Math.PI * 2);
-    ctx.fill();
-    px += lean * 11;
-    py -= 12.5;
+  function visiblePanels() {
+    return LAYOUTS[state.layout].panels.length;
   }
-  // fronds
-  const crownX = px, crownY = py;
-  const fronds = [[-95, -38], [-70, -52], [-38, -62], [-4, -66], [30, -58], [58, -42], [82, -22]];
-  for (const [fx, fy] of fronds) {
-    ctx.lineWidth = 5.5;
-    ctx.beginPath();
-    ctx.moveTo(crownX, crownY);
-    ctx.quadraticCurveTo(crownX + fx * 0.55, crownY + fy, crownX + fx, crownY + fy + 34);
-    ctx.stroke();
-    ctx.lineWidth = 3.4;
-    ctx.beginPath();
-    ctx.moveTo(crownX, crownY);
-    ctx.quadraticCurveTo(crownX + fx * 0.6, crownY + fy + 8, crownX + fx * 0.92, crownY + fy + 44);
-    ctx.stroke();
-  }
-  ctx.beginPath();
-  ctx.arc(crownX - 5, crownY + 4, 6, 0, Math.PI * 2);
-  ctx.arc(crownX + 6, crownY + 5, 5, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
 
-function paintBackdrop(ctx, x, y, w, h, variant) {
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(x, y, w, h);
-  ctx.clip();
-  if (variant === 'sunset-beach') {
-    skyGradient(ctx, x, y, w, h, [[0, '#2b1055'], [0.35, '#8e2a8f'], [0.62, '#e84e8a'], [0.8, '#ff8c42'], [1, '#ffc65c']]);
-    stripedSun(ctx, x + w * 0.52, y + h * 0.60, Math.min(w, h) * 0.30, '#ffd76e', '#ff5e7a');
-    // sea
-    const seaY = y + h * 0.74;
-    const sg = ctx.createLinearGradient(0, seaY, 0, y + h);
-    sg.addColorStop(0, '#7a2d6e');
-    sg.addColorStop(1, '#1c0f3d');
-    ctx.fillStyle = sg;
-    ctx.fillRect(x, seaY, w, h * 0.26);
-    const rnd = seededRandom(42);
-    ctx.fillStyle = 'rgba(255,190,90,0.5)';
-    for (let i = 0; i < 42; i++) {
-      const ry = seaY + rnd() * h * 0.22;
-      const rw = w * (0.02 + rnd() * 0.10) * (0.4 + (ry - seaY) / (h * 0.26));
-      ctx.fillRect(x + w * 0.52 - rw / 2 + (rnd() - 0.5) * w * 0.08, ry, rw, 2.2);
+  function selectedPanel() {
+    return state.panels[Math.min(state.selected, visiblePanels() - 1)];
+  }
+
+  function gapFor(W) {
+    return state.frameWidth * (W / 1080);
+  }
+
+  /* ---------- Backdrop painters ----------
+     Each painter fills one panel rect with original canvas artwork. */
+
+  function skyGradient(ctx, x, y, w, h, stops) {
+    var g = ctx.createLinearGradient(0, y, 0, y + h);
+    for (var i = 0; i < stops.length; i++) g.addColorStop(stops[i][0], stops[i][1]);
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+  }
+
+  function stripedSun(ctx, cx, cy, r, colour, stripeColour) {
+    var halo = ctx.createRadialGradient(cx, cy, r * 0.4, cx, cy, r * 1.9);
+    halo.addColorStop(0, 'rgba(255, 120, 60, 0.55)');
+    halo.addColorStop(1, 'rgba(255, 120, 60, 0)');
+    ctx.fillStyle = halo;
+    ctx.fillRect(cx - r * 2, cy - r * 2, r * 4, r * 4);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fillStyle = colour;
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    /* Cut the lower half into glowing stripes. */
+    var stripe = r * 0.09;
+    var yy = cy + r * 0.08;
+    var n = 0;
+    while (yy < cy + r) {
+      var thick = stripe * (1 + n * 0.45);
+      ctx.fillStyle = stripeColour;
+      ctx.fillRect(cx - r, yy, r * 2, thick);
+      yy += stripe * 1.7 + thick;
+      n++;
     }
-    ctx.fillStyle = '#160a2e';
-    ctx.fillRect(x, y + h * 0.965, w, h * 0.035);
-    palmTree(ctx, x + w * 0.10, y + h * 1.0, Math.min(w, h) / 300, 1, '#160a2e');
-    palmTree(ctx, x + w * 0.94, y + h * 1.0, Math.min(w, h) / 360, -1, '#160a2e');
-  } else if (variant === 'neon-strip') {
-    skyGradient(ctx, x, y, w, h, [[0, '#03041c'], [0.55, '#141452'], [0.8, '#3d1160'], [1, '#0a0620']]);
-    const rnd = seededRandom(7);
-    ctx.fillStyle = '#ffffff';
-    for (let i = 0; i < 60; i++) {
-      ctx.globalAlpha = 0.3 + rnd() * 0.7;
-      ctx.fillRect(x + rnd() * w, y + rnd() * h * 0.4, 2, 2);
+    ctx.restore();
+  }
+
+  function paintClouds(ctx, rng, x, y, w, h, colour, alpha) {
+    ctx.fillStyle = colour;
+    ctx.globalAlpha = alpha;
+    for (var i = 0; i < 3; i++) {
+      var cw = w * (0.14 + rng() * 0.12);
+      var cx = x + w * (0.05 + rng() * 0.75);
+      var cy = y + h * (0.06 + rng() * 0.3);
+      var ch = h * 0.018;
+      ctx.beginPath();
+      ctx.roundRect(cx, cy, cw, ch, ch / 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.roundRect(cx + cw * 0.18, cy - ch * 0.9, cw * 0.5, ch, ch / 2);
+      ctx.fill();
     }
     ctx.globalAlpha = 1;
-    // neon ring sun
-    ctx.save();
-    ctx.strokeStyle = '#ff4dd2';
-    ctx.lineWidth = Math.min(w, h) * 0.02;
-    ctx.shadowColor = '#ff4dd2';
-    ctx.shadowBlur = 26;
-    ctx.beginPath();
-    ctx.arc(x + w * 0.5, y + h * 0.44, Math.min(w, h) * 0.24, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-    skyline(ctx, x, y + h * 0.78, w, h * 0.34, 99, '#070418', '#39d5e8', 0.30);
-    // chrome grid floor
-    ctx.strokeStyle = 'rgba(57,213,232,0.55)';
-    ctx.lineWidth = 1.6;
-    const floorY = y + h * 0.78;
-    for (let i = 0; i <= 10; i++) {
-      const fx = x + (i / 10) * w;
+  }
+
+  function paintBirds(ctx, rng, x, y, w, h, colour) {
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = Math.max(1.5, w * 0.002);
+    ctx.lineCap = 'round';
+    for (var i = 0; i < 3; i++) {
+      var bx = x + w * (0.1 + rng() * 0.7);
+      var by = y + h * (0.08 + rng() * 0.22);
+      var s = w * (0.012 + rng() * 0.01);
       ctx.beginPath();
-      ctx.moveTo(x + w * 0.5 + (fx - x - w * 0.5) * 0.24, floorY);
-      ctx.lineTo(fx + (fx - x - w * 0.5) * 0.7, y + h);
+      ctx.moveTo(bx - s, by);
+      ctx.quadraticCurveTo(bx - s * 0.4, by - s * 0.7, bx, by);
+      ctx.quadraticCurveTo(bx + s * 0.4, by - s * 0.7, bx + s, by);
       ctx.stroke();
     }
-    for (let i = 1; i <= 5; i++) {
-      const gy = floorY + (i * i) * h * 0.008;
+  }
+
+  function paintPalmFronds(ctx, px, py, size, colour, lean) {
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = Math.max(2, size * 0.03);
+    ctx.lineCap = 'round';
+    for (var i = 0; i < 7; i++) {
+      var ang = (-0.15 - i * 0.22) * Math.PI + lean;
+      var ex = px + Math.cos(ang) * size;
+      var ey = py + Math.sin(ang) * size * 0.75;
+      var mx = px + Math.cos(ang) * size * 0.5;
+      var my = py + Math.sin(ang) * size * 0.45 - size * 0.12;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.quadraticCurveTo(mx, my, ex, ey);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.quadraticCurveTo(px + lean * size * 0.4, py + size * 0.35, px + lean * size * 0.5, py + size * 0.62);
+    ctx.stroke();
+  }
+
+  function paintSelfieFigure(ctx, x, y, scale, colour) {
+    ctx.fillStyle = colour;
+    ctx.strokeStyle = colour;
+    ctx.lineCap = 'round';
+    var headR = 9 * scale;
+    var hx = x, hy = y;
+    ctx.beginPath();
+    ctx.arc(hx, hy, headR, 0, Math.PI * 2);
+    ctx.fill();
+    /* Torso and legs. */
+    ctx.lineWidth = 13 * scale;
+    ctx.beginPath();
+    ctx.moveTo(hx, hy + headR);
+    ctx.lineTo(hx, hy + 52 * scale);
+    ctx.stroke();
+    ctx.lineWidth = 8 * scale;
+    ctx.beginPath();
+    ctx.moveTo(hx, hy + 52 * scale);
+    ctx.lineTo(hx - 12 * scale, hy + 92 * scale);
+    ctx.moveTo(hx, hy + 52 * scale);
+    ctx.lineTo(hx + 12 * scale, hy + 92 * scale);
+    ctx.stroke();
+    /* Left arm down, right arm raised holding a phone. */
+    ctx.lineWidth = 7 * scale;
+    ctx.beginPath();
+    ctx.moveTo(hx - 4 * scale, hy + 16 * scale);
+    ctx.lineTo(hx - 26 * scale, hy + 44 * scale);
+    ctx.moveTo(hx + 4 * scale, hy + 16 * scale);
+    ctx.lineTo(hx + 26 * scale, hy - 14 * scale);
+    ctx.stroke();
+    ctx.fillRect(hx + 20 * scale, hy - 30 * scale, 11 * scale, 18 * scale);
+  }
+
+  function paintSunsetBeach(ctx, r, seed) {
+    var rng = mulberry32(seed);
+    var x = r.x, y = r.y, w = r.w, h = r.h;
+    var horizon = y + h * 0.66;
+    skyGradient(ctx, x, y, w, horizon - y, [
+      [0, '#3d1a7d'], [0.35, '#8a1d8f'], [0.62, '#e0207c'], [0.85, '#ff5e3a'], [1, '#ff8a2e']
+    ]);
+    paintClouds(ctx, rng, x, y, w, horizon - y, '#7a2ea8', 0.5);
+    paintBirds(ctx, rng, x, y, w, horizon - y, '#3d1a5e');
+    stripedSun(ctx, x + w * 0.5, horizon - h * 0.1, w * 0.19, '#ffd21f', '#ff8a2e');
+    /* Sea with sun sparkle. */
+    var sea = ctx.createLinearGradient(0, horizon, 0, y + h);
+    sea.addColorStop(0, '#5b1a7d');
+    sea.addColorStop(1, '#1d0b3d');
+    ctx.fillStyle = sea;
+    ctx.fillRect(x, horizon, w, y + h - horizon);
+    for (var i = 0; i < 90; i++) {
+      var sx = x + rng() * w;
+      var sy = horizon + rng() * (y + h - horizon);
+      var spread = Math.abs(sx - (x + w * 0.5)) / (w * 0.5);
+      if (rng() > spread * 0.8 + 0.15) continue;
+      ctx.fillStyle = rng() > 0.5 ? 'rgba(255, 210, 60, 0.75)' : 'rgba(255, 140, 70, 0.6)';
+      ctx.fillRect(sx, sy, w * (0.02 + rng() * 0.05), Math.max(1.5, h * 0.002));
+    }
+    /* Beach strip and figure. */
+    ctx.fillStyle = '#160a2e';
+    ctx.fillRect(x, y + h * 0.94, w, h * 0.06);
+    paintSelfieFigure(ctx, x + w * 0.42, y + h * 0.78, w / 340, '#160a2e');
+    paintPalmFronds(ctx, x + w * 0.02, y + h * 0.86, w * 0.22, '#160a2e', 0.25);
+    paintPalmFronds(ctx, x + w * 0.98, y + h * 0.9, w * 0.18, '#160a2e', -0.2);
+  }
+
+  function paintNeonStrip(ctx, r, seed) {
+    var rng = mulberry32(seed);
+    var x = r.x, y = r.y, w = r.w, h = r.h;
+    var horizon = y + h * 0.62;
+    skyGradient(ctx, x, y, w, horizon - y, [[0, '#0d0626'], [0.6, '#1a0f45'], [1, '#2a1258']]);
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    for (var i = 0; i < 60; i++) {
+      var s = rng();
+      ctx.globalAlpha = 0.25 + s * 0.65;
+      ctx.fillRect(x + rng() * w, y + rng() * (horizon - y), s > 0.9 ? 2 : 1.4, s > 0.9 ? 2 : 1.4);
+    }
+    ctx.globalAlpha = 1;
+    /* Skyline. */
+    var bx = x;
+    while (bx < x + w) {
+      var bw = w * (0.08 + rng() * 0.1);
+      var bh = h * (0.12 + rng() * 0.3);
+      ctx.fillStyle = '#0b061f';
+      ctx.fillRect(bx, horizon - bh, bw, bh);
+      ctx.fillStyle = 'rgba(53, 224, 255, 0.85)';
+      var wins = Math.floor(bw / (w * 0.03));
+      for (var k = 0; k < wins; k++) {
+        if (rng() > 0.45) continue;
+        ctx.fillRect(bx + 3 + k * w * 0.03, horizon - bh + 6 + rng() * (bh - 14), 3, 4);
+      }
+      bx += bw + w * 0.012;
+    }
+    /* Neon ring, glowing over the skyline. */
+    var ringR = w * 0.26;
+    var rcx = x + w * 0.5, rcy = y + h * 0.38;
+    ctx.save();
+    ctx.shadowColor = '#ff2bd6';
+    ctx.shadowBlur = w * 0.05;
+    ctx.strokeStyle = '#ff2bd6';
+    ctx.lineWidth = Math.max(3, w * 0.014);
+    ctx.beginPath();
+    ctx.arc(rcx, rcy, ringR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+    /* Dark floor for the perspective grid to sit on. */
+    var floor = ctx.createLinearGradient(0, horizon, 0, y + h);
+    floor.addColorStop(0, '#1e0f4d');
+    floor.addColorStop(1, '#0d0626');
+    ctx.fillStyle = floor;
+    ctx.fillRect(x, horizon, w, y + h - horizon);
+    /* Perspective grid floor. */
+    var vx = x + w * 0.5;
+    ctx.strokeStyle = 'rgba(53, 224, 255, 0.55)';
+    ctx.lineWidth = Math.max(1, w * 0.003);
+    for (var g = -6; g <= 6; g++) {
+      ctx.beginPath();
+      ctx.moveTo(vx + g * w * 0.06, horizon);
+      ctx.lineTo(vx + g * w * 0.22, y + h);
+      ctx.stroke();
+    }
+    var gy = horizon;
+    var step = (y + h - horizon) * 0.12;
+    while (gy < y + h) {
       ctx.beginPath();
       ctx.moveTo(x, gy);
       ctx.lineTo(x + w, gy);
       ctx.stroke();
+      gy += step;
+      step *= 1.55;
     }
-    palmTree(ctx, x + w * 0.06, y + h * 0.86, Math.min(w, h) / 380, 1, '#05020f');
-    palmTree(ctx, x + w * 0.97, y + h * 0.88, Math.min(w, h) / 420, -1, '#05020f');
-  } else if (variant === 'palm-dusk') {
-    skyGradient(ctx, x, y, w, h, [[0, '#0b4f5c'], [0.45, '#3d9e8f'], [0.72, '#f2b879'], [1, '#ff8c69']]);
-    ctx.save();
-    ctx.fillStyle = 'rgba(255,236,180,0.9)';
-    ctx.shadowColor = '#ffdf9e';
-    ctx.shadowBlur = 60;
-    ctx.beginPath();
-    ctx.arc(x + w * 0.68, y + h * 0.40, Math.min(w, h) * 0.17, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-    ctx.fillStyle = 'rgba(9,42,48,0.85)';
-    ctx.beginPath();
-    ctx.moveTo(x, y + h * 0.82);
-    ctx.quadraticCurveTo(x + w * 0.3, y + h * 0.74, x + w * 0.55, y + h * 0.82);
-    ctx.quadraticCurveTo(x + w * 0.8, y + h * 0.9, x + w, y + h * 0.84);
-    ctx.lineTo(x + w, y + h);
-    ctx.lineTo(x, y + h);
-    ctx.fill();
-    palmTree(ctx, x + w * 0.16, y + h * 0.94, Math.min(w, h) / 260, 1, '#07222a');
-    palmTree(ctx, x + w * 0.88, y + h * 0.98, Math.min(w, h) / 300, -1, '#07222a');
-    palmTree(ctx, x + w * 0.55, y + h * 1.02, Math.min(w, h) / 430, 1, 'rgba(7,34,42,0.7)');
-  } else { // skyline
-    skyGradient(ctx, x, y, w, h, [[0, '#1d0b38'], [0.5, '#5b2160'], [0.78, '#c94f7c'], [1, '#ff9a5c']]);
-    const rnd = seededRandom(1234);
-    ctx.fillStyle = '#fff';
-    for (let i = 0; i < 46; i++) {
-      ctx.globalAlpha = 0.25 + rnd() * 0.6;
-      ctx.fillRect(x + rnd() * w, y + rnd() * h * 0.34, 2, 2);
-    }
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = '#ffe9b0';
-    ctx.beginPath();
-    ctx.arc(x + w * 0.8, y + h * 0.16, Math.min(w, h) * 0.07, 0, Math.PI * 2);
-    ctx.fill();
-    skyline(ctx, x, y + h * 0.86, w, h * 0.30, 555, 'rgba(38,14,64,0.75)', null, 0);
-    skyline(ctx, x, y + h * 0.88, w, h * 0.44, 31, '#150826', '#ffb35c', 0.22);
-    const wg = ctx.createLinearGradient(0, y + h * 0.88, 0, y + h);
-    wg.addColorStop(0, 'rgba(30,10,50,0.92)');
-    wg.addColorStop(1, 'rgba(12,4,26,1)');
-    ctx.fillStyle = wg;
+    paintPalmFronds(ctx, x + w * 0.06, y + h * 0.6, w * 0.2, '#0b061f', 0.2);
+    paintPalmFronds(ctx, x + w * 0.94, y + h * 0.62, w * 0.18, '#0b061f', -0.2);
+  }
+
+  function paintPalmDusk(ctx, r, seed) {
+    var rng = mulberry32(seed);
+    var x = r.x, y = r.y, w = r.w, h = r.h;
+    skyGradient(ctx, x, y, w, h, [
+      [0, '#4b1d8f'], [0.45, '#a02090'], [0.75, '#ff2e7e'], [1, '#ff7a2e']
+    ]);
+    paintClouds(ctx, rng, x, y, w, h * 0.6, '#8a2ea8', 0.45);
+    paintBirds(ctx, rng, x, y, w, h * 0.5, '#3d1a5e');
+    stripedSun(ctx, x + w * 0.68, y + h * 0.62, w * 0.22, '#ffd76a', '#ff8a2e');
+    var ground = ctx.createLinearGradient(0, y + h * 0.88, 0, y + h);
+    ground.addColorStop(0, '#2a0f4d');
+    ground.addColorStop(1, '#160a2e');
+    ctx.fillStyle = ground;
     ctx.fillRect(x, y + h * 0.88, w, h * 0.12);
+    paintPalmFronds(ctx, x + w * 0.08, y + h * 0.94, w * 0.3, '#160a2e', 0.2);
+    paintPalmFronds(ctx, x + w * 0.9, y + h * 0.96, w * 0.22, '#160a2e', -0.25);
   }
-  ctx.restore();
-}
 
-/* ---------- cover rendering ---------- */
-function drawPanelImage(ctx, img, px, py, pw, ph, panel) {
-  const ia = img.naturalWidth / img.naturalHeight;
-  const pa = pw / ph;
-  let dw, dh;
-  if (ia > pa) { dh = ph; dw = ph * ia; } else { dw = pw; dh = pw / ia; }
-  dw *= panel.zoom;
-  dh *= panel.zoom;
-  const dx = px + (pw - dw) / 2 + panel.ox * pw;
-  const dy = py + (ph - dh) / 2 + panel.oy * ph;
-  ctx.drawImage(img, dx, dy, dw, dh);
-}
-
-function applyGrade(ctx, W, H) {
-  const g = GRADES[state.grade];
-  const i = state.intensity;
-  if (i <= 0) return;
-  const [tr, tg, tb] = g.top, [mr, mg, mb] = g.mid, [br, bg, bb] = g.bottom;
-  const grad = ctx.createLinearGradient(0, 0, 0, H);
-  grad.addColorStop(0, `rgba(${tr},${tg},${tb},${0.42 * i})`);
-  grad.addColorStop(0.5, `rgba(${mr},${mg},${mb},${0.10 * i})`);
-  grad.addColorStop(1, `rgba(${br},${bg},${bb},${0.38 * i})`);
-  ctx.save();
-  ctx.globalCompositeOperation = 'soft-light';
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, H);
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.globalAlpha = 0.45;
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, H);
-  ctx.restore();
-  // vignette to seat the caption
-  const vg = ctx.createRadialGradient(W / 2, H * 0.42, Math.min(W, H) * 0.36, W / 2, H * 0.55, Math.max(W, H) * 0.78);
-  vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, `rgba(8,2,20,${0.38 * i})`);
-  ctx.fillStyle = vg;
-  ctx.fillRect(0, 0, W, H);
-}
-
-function fitFont(ctx, text, maxWidth, startSize, weight) {
-  let size = startSize;
-  ctx.font = `${weight} ${size}px ${CAPTION_FONT}`;
-  while (size > 18 && ctx.measureText(text).width > maxWidth) {
-    size *= 0.92;
-    ctx.font = `${weight} ${size}px ${CAPTION_FONT}`;
+  function paintSkyline(ctx, r, seed) {
+    var rng = mulberry32(seed);
+    var x = r.x, y = r.y, w = r.w, h = r.h;
+    var horizon = y + h * 0.68;
+    skyGradient(ctx, x, y, w, horizon - y, [
+      [0, '#2a1258'], [0.5, '#c81d7a'], [0.85, '#ff7a2e'], [1, '#ffb03d']
+    ]);
+    ctx.fillStyle = '#ffe9a8';
+    ctx.beginPath();
+    ctx.arc(x + w * 0.72, y + h * 0.3, w * 0.11, 0, Math.PI * 2);
+    ctx.fill();
+    paintClouds(ctx, rng, x, y, w, horizon - y, '#7a2ea8', 0.4);
+    var bx = x;
+    var back = '#3d1a6e';
+    while (bx < x + w) {
+      var bw = w * (0.1 + rng() * 0.12);
+      var bh = h * (0.1 + rng() * 0.2);
+      ctx.fillStyle = back;
+      ctx.fillRect(bx, horizon - bh, bw, bh);
+      bx += bw + w * 0.02;
+    }
+    bx = x;
+    while (bx < x + w) {
+      var bw2 = w * (0.07 + rng() * 0.11);
+      var bh2 = h * (0.18 + rng() * 0.28);
+      ctx.fillStyle = '#12082e';
+      ctx.fillRect(bx, horizon - bh2, bw2, bh2);
+      ctx.fillStyle = 'rgba(255, 210, 90, 0.9)';
+      for (var k = 0; k < Math.floor(bw2 / (w * 0.035)); k++) {
+        if (rng() > 0.4) continue;
+        ctx.fillRect(bx + 4 + k * w * 0.035, horizon - bh2 + 8 + rng() * (bh2 - 16), 3, 4);
+      }
+      bx += bw2 + w * 0.015;
+    }
+    ctx.fillStyle = '#160a2e';
+    ctx.fillRect(x, horizon, w, y + h - horizon);
+    ctx.fillStyle = 'rgba(255, 210, 90, 0.5)';
+    for (var d = 0; d < 12; d++) {
+      ctx.fillRect(x + w * 0.08 + d * w * 0.075, y + h * 0.86, w * 0.035, 2);
+    }
   }
-  return size;
-}
 
-function drawCaption(ctx, W, H) {
-  const cap = (state.caption || '').trim();
-  const sub = (state.subcaption || '').trim();
-  if (!cap && !sub) return;
-  const style = LETTER_STYLES[state.letter];
-  // readability shade behind the words
-  const shade = ctx.createLinearGradient(0, H * 0.58, 0, H);
-  shade.addColorStop(0, 'rgba(8,2,18,0)');
-  shade.addColorStop(0.55, 'rgba(8,2,18,0.38)');
-  shade.addColorStop(1, 'rgba(8,2,18,0.62)');
-  ctx.fillStyle = shade;
-  ctx.fillRect(0, H * 0.58, W, H * 0.42);
+  var BACKDROP_PAINTERS = {
+    beach: paintSunsetBeach,
+    neon: paintNeonStrip,
+    palm: paintPalmDusk,
+    skyline: paintSkyline
+  };
 
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  try { ctx.letterSpacing = '0px'; } catch (e) { /* older engines */ }
+  /* ---------- Photos ---------- */
 
-  let subBaseline = 0;
-  if (sub) {
-    const subSize = fitFont(ctx, sub, W * 0.86, H * 0.036, 700);
-    try { ctx.letterSpacing = `${Math.max(2, subSize * 0.32)}px`; } catch (e) { /* ignore */ }
-    subBaseline = H * 0.845;
-    ctx.lineWidth = subSize * 0.16;
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = 'rgba(10,4,24,0.9)';
-    ctx.strokeText(sub, W / 2, subBaseline);
-    ctx.fillStyle = style.sub;
-    ctx.fillText(sub, W / 2, subBaseline);
-    try { ctx.letterSpacing = '0px'; } catch (e) { /* ignore */ }
-  }
-  if (cap) {
-    const size = fitFont(ctx, cap.toUpperCase(), W * 0.93, H * 0.155, 900);
-    const grad = ctx.createLinearGradient(0, H * 0.86 - size, 0, H * 0.97);
-    style.stops.forEach((col, idx) => grad.addColorStop(idx / (style.stops.length - 1), col));
-    const base = H * 0.955;
-    ctx.lineWidth = size * 0.17;
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = style.stroke;
-    ctx.shadowColor = 'rgba(0,0,0,0.55)';
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetY = size * 0.055;
-    ctx.strokeText(cap.toUpperCase(), W / 2, base);
-    ctx.fillStyle = grad;
-    ctx.fillText(cap.toUpperCase(), W / 2, base);
-    ctx.shadowOffsetY = 0;
-    // thin underline flourish in the mid grade colour
-    const [mr, mg, mb] = GRADES[state.grade].mid;
-    ctx.fillStyle = `rgba(${mr},${mg},${mb},0.95)`;
-    const uw = Math.min(W * 0.5, ctx.measureText(cap.toUpperCase()).width * 0.7);
-    ctx.fillRect(W / 2 - uw / 2, base + size * 0.13, uw, Math.max(3, H * 0.006));
-  }
-}
-
-function renderCover(ctx, W, H, forExport) {
-  const layout = LAYOUTS[state.layout];
-  const border = Math.max(4, Math.round(W * 0.009));
-  ctx.fillStyle = '#fdfbf7';
-  ctx.fillRect(0, 0, W, H);
-  const grade = GRADES[state.grade];
-  layout.panels.forEach((def, idx) => {
-    const panel = state.panels[idx];
-    const px = def.rect[0] * W + border;
-    const py = def.rect[1] * H + border;
-    const pw = def.rect[2] * W - border * 2;
-    const ph = def.rect[3] * H - border * 2;
+  function drawPhotoInto(ctx, panel, r) {
+    var img = panel.photo.img;
+    var iw = img.naturalWidth || img.width;
+    var ih = img.naturalHeight || img.height;
+    var scale = Math.max(r.w / iw, r.h / ih) * panel.photo.zoom;
+    var dw = iw * scale;
+    var dh = ih * scale;
+    var dx = r.x + (r.w - dw) / 2 + panel.photo.ox * (dw - r.w) / 2;
+    var dy = r.y + (r.h - dh) / 2 + panel.photo.oy * (dh - r.h) / 2;
     ctx.save();
     ctx.beginPath();
-    ctx.rect(px, py, pw, ph);
+    ctx.rect(r.x, r.y, r.w, r.h);
     ctx.clip();
-    if (panel.img) {
-      if ('filter' in ctx) {
-        ctx.filter = `saturate(${1 + grade.sat * state.intensity}) contrast(${1 + grade.con * state.intensity}) brightness(${1 + 0.04 * state.intensity})`;
-      }
-      drawPanelImage(ctx, panel.img, px, py, pw, ph, panel);
-      if ('filter' in ctx) ctx.filter = 'none';
-    } else {
-      paintBackdrop(ctx, px, py, pw, ph, panel.backdrop);
-    }
+    ctx.drawImage(img, dx, dy, dw, dh);
+    /* A light warm wash so a photo sits in the poster's grade. */
+    ctx.fillStyle = 'rgba(255, 90, 120, 0.08)';
+    ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.restore();
-    if (!forExport && idx === state.selected) {
-      ctx.strokeStyle = '#ff4d8d';
-      ctx.lineWidth = Math.max(3, W * 0.004);
-      ctx.strokeRect(px - border * 0.4, py - border * 0.4, pw + border * 0.8, ph + border * 0.8);
+  }
+
+  /* ---------- Colour grade ---------- */
+
+  function applyColourGrade(ctx, W, H) {
+    var grade = GRADES[state.grade];
+    var a = state.gradeIntensity;
+    if (a <= 0) return;
+    var tint = ctx.createLinearGradient(0, 0, 0, H);
+    tint.addColorStop(0, grade.top);
+    tint.addColorStop(1, grade.bottom);
+    ctx.save();
+    ctx.globalCompositeOperation = 'overlay';
+    ctx.globalAlpha = grade.strength * a;
+    ctx.fillStyle = tint;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'soft-light';
+    ctx.globalAlpha = grade.strength * a * 0.7;
+    ctx.fillRect(0, 0, W, H);
+    /* Vignette: darken the corners so the caption pops. */
+    ctx.globalCompositeOperation = 'source-over';
+    var vig = ctx.createRadialGradient(
+      W / 2, H / 2, Math.min(W, H) * 0.35,
+      W / 2, H / 2, Math.max(W, H) * 0.75
+    );
+    vig.addColorStop(0, 'rgba(10, 4, 26, 0)');
+    vig.addColorStop(1, 'rgba(10, 4, 26, ' + (0.34 * a).toFixed(3) + ')');
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = vig;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+
+  /* ---------- Caption ---------- */
+
+  function fitFont(ctx, text, maxWidth, startPx, family, weight, spacing) {
+    var px = startPx;
+    while (px > 24) {
+      ctx.font = weight + ' ' + Math.round(px) + 'px ' + family;
+      if ('letterSpacing' in ctx) ctx.letterSpacing = spacing + 'px';
+      if (ctx.measureText(text).width <= maxWidth) break;
+      px *= 0.94;
+    }
+    return px;
+  }
+
+  function drawCaption(ctx, W, H) {
+    var style = CAPTION_STYLES[state.captionStyle];
+    var main = (state.caption || 'VICE HEAT').toUpperCase();
+    var sub = (state.subCaption || '').toUpperCase();
+    var top = state.captionPlace === 'top';
+    var family = '"Arial Narrow", Impact, "Helvetica Neue", sans-serif';
+
+    /* Readability scrim behind the lettering. */
+    var zoneH = H * 0.21;
+    var scrim = top
+      ? ctx.createLinearGradient(0, 0, 0, zoneH)
+      : ctx.createLinearGradient(0, H - zoneH, 0, H);
+    if (top) {
+      scrim.addColorStop(0, 'rgba(16, 5, 36, 0.62)');
+      scrim.addColorStop(1, 'rgba(16, 5, 36, 0)');
+      ctx.fillStyle = scrim;
+      ctx.fillRect(0, 0, W, zoneH);
+    } else {
+      scrim.addColorStop(0, 'rgba(16, 5, 36, 0)');
+      scrim.addColorStop(1, 'rgba(16, 5, 36, 0.62)');
+      ctx.fillStyle = scrim;
+      ctx.fillRect(0, H - zoneH, W, zoneH);
+    }
+
+    var cx = W / 2;
+    var mainPx = fitFont(ctx, main, W * 0.94, Math.min(W * 0.17, H * 0.15), family, 900, W * 0.004);
+    var subPx = fitFont(ctx, sub, W * 0.9, W * 0.042, family, 800, W * 0.011);
+
+    var mainY, subY, barY;
+    if (top) {
+      mainY = H * 0.055 + mainPx * 0.8;
+      subY = mainY + mainPx * 0.62 + subPx * 0.5;
+      barY = subY + subPx * 0.9;
+    } else {
+      subY = H * 0.825;
+      mainY = H * 0.91;
+      barY = H * 0.98;
+    }
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+
+    /* Sub-caption: spaced yellow lettering with a dark edge. */
+    if (sub) {
+      ctx.font = '800 ' + Math.round(subPx) + 'px ' + family;
+      if ('letterSpacing' in ctx) ctx.letterSpacing = Math.round(W * 0.011) + 'px';
+      ctx.lineWidth = Math.max(2, subPx * 0.14);
+      ctx.strokeStyle = '#241533';
+      ctx.strokeText(sub, cx, subY);
+      ctx.fillStyle = '#ffd94d';
+      ctx.fillText(sub, cx, subY);
+    }
+
+    /* Main caption: gradient fill, heavy outline, soft drop shadow. */
+    ctx.font = '900 ' + Math.round(mainPx) + 'px ' + family;
+    if ('letterSpacing' in ctx) ctx.letterSpacing = Math.round(W * 0.004) + 'px';
+    var grad = ctx.createLinearGradient(0, mainY - mainPx * 0.55, 0, mainY + mainPx * 0.55);
+    var stops = style.stops;
+    for (var i = 0; i < stops.length; i++) grad.addColorStop(i / (stops.length - 1), stops[i]);
+    ctx.save();
+    ctx.shadowColor = 'rgba(16, 5, 36, 0.75)';
+    ctx.shadowBlur = mainPx * 0.06;
+    ctx.shadowOffsetY = mainPx * 0.03;
+    ctx.lineWidth = mainPx * 0.16;
+    ctx.strokeStyle = style.outline;
+    ctx.strokeText(main, cx, mainY);
+    if (state.captionStyle === 'neon') {
+      ctx.shadowColor = '#ff2bd6';
+      ctx.shadowBlur = mainPx * 0.12;
+    }
+    ctx.fillStyle = grad;
+    ctx.fillText(main, cx, mainY);
+    ctx.restore();
+
+    /* Underline bar in the accent pink. */
+    ctx.fillStyle = '#ff4d8d';
+    var barW = W * 0.52;
+    ctx.fillRect(cx - barW / 2, barY, barW, Math.max(3, H * 0.006));
+    if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+  }
+
+  /* ---------- Full cover render ---------- */
+
+  function renderCover(ctx, W, H) {
+    var gap = gapFor(W);
+    var frame = FRAME_STYLES[state.frame];
+    ctx.save();
+    ctx.clearRect(0, 0, W, H);
+    if (state.frame === 'neon') {
+      var fg = ctx.createLinearGradient(0, 0, W, H);
+      fg.addColorStop(0, '#ff2bd6');
+      fg.addColorStop(0.5, '#ff7a2e');
+      fg.addColorStop(1, '#35e0ff');
+      ctx.fillStyle = fg;
+    } else {
+      ctx.fillStyle = frame.fill;
+    }
+    ctx.fillRect(0, 0, W, H);
+
+    var rects = panelRectsFor(state.layout, W, H, gap);
+    var count = visiblePanels();
+    for (var i = 0; i < count; i++) {
+      var r = rects[i];
+      var panel = state.panels[i];
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(r.x, r.y, r.w, r.h);
+      ctx.clip();
+      BACKDROP_PAINTERS[panel.backdrop](ctx, r, 1000 + i * 733);
+      if (panel.photo) drawPhotoInto(ctx, panel, r);
+      ctx.restore();
+      /* Selected panel gets a bright outline in the preview only. */
+      if (ctx === stageCtx && i === state.selected) {
+        ctx.save();
+        ctx.strokeStyle = '#ff5e8a';
+        ctx.lineWidth = Math.max(2, W * 0.004);
+        ctx.strokeRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
+        ctx.restore();
+      }
+    }
+
+    applyColourGrade(ctx, W, H);
+    drawCaption(ctx, W, H);
+    ctx.restore();
+  }
+
+  /* ---------- Preview ---------- */
+
+  function renderPreview() {
+    var size = EXPORT_SIZES[state.exportSize];
+    var scale = Math.min(864 / size.w, 1080 / size.h, 1);
+    var pw = Math.round(size.w * scale);
+    var ph = Math.round(size.h * scale);
+    if (stage.width !== pw || stage.height !== ph) {
+      stage.width = pw;
+      stage.height = ph;
+    }
+    renderCover(stageCtx, pw, ph);
+  }
+
+  function refreshPanelSummary() {
+    var i = Math.min(state.selected, visiblePanels() - 1);
+    var panel = state.panels[i];
+    var name = LAYOUTS[state.layout].panels[i];
+    panelSummary.textContent =
+      'Panel ' + (i + 1) + ' \u2014 ' + name +
+      ' \u00b7 backdrop: ' + BACKDROP_LABELS[panel.backdrop] +
+      (panel.photo ? ' \u00b7 photo loaded' : ' \u00b7 no photo yet');
+    var photo = panel.photo;
+    zoomSlider.value = photo ? Math.round(photo.zoom * 100) : 100;
+    shiftXSlider.value = photo ? Math.round(photo.ox * 100) : 0;
+    shiftYSlider.value = photo ? Math.round(photo.oy * 100) : 0;
+  }
+
+  function refreshAll() {
+    refreshPanelSummary();
+    renderPreview();
+  }
+
+  /* ---------- Controls ---------- */
+
+  function bindChipRow(rowId, attr, apply) {
+    var row = $(rowId);
+    row.addEventListener('click', function (event) {
+      var btn = event.target.closest('button[data-' + attr + ']');
+      if (!btn) return;
+      var chips = row.querySelectorAll('.chip');
+      for (var i = 0; i < chips.length; i++) chips[i].classList.remove('is-active');
+      btn.classList.add('is-active');
+      apply(btn.getAttribute('data-' + attr));
+      refreshAll();
+    });
+  }
+
+  bindChipRow('layoutRow', 'layout', function (value) {
+    state.layout = value;
+    state.selected = 0;
+    setStatus('Layout: ' + LAYOUTS[value].label + '. Click a panel to work on it.');
+  });
+
+  bindChipRow('gradeRow', 'grade', function (value) {
+    state.grade = value;
+    setStatus('Grade: ' + GRADES[value].label + '.');
+  });
+
+  bindChipRow('captionStyleRow', 'caption-style', function (value) {
+    state.captionStyle = value;
+    setStatus('Caption style: ' + CAPTION_STYLES[value].label + '.');
+  });
+
+  bindChipRow('captionPlaceRow', 'caption-place', function (value) {
+    state.captionPlace = value;
+    setStatus(value === 'top'
+      ? 'Caption moved to the top of the cover.'
+      : 'Caption back at the bottom of the cover.');
+  });
+
+  bindChipRow('frameRow', 'frame', function (value) {
+    state.frame = value;
+    setStatus('Frame: ' + FRAME_STYLES[value].label + '.');
+  });
+
+  bindChipRow('sizeRow', 'size', function (value) {
+    state.exportSize = value;
+    setStatus('Export size: ' + value.replace('x', ' \u00d7 ') + '.');
+  });
+
+  gradeSlider.addEventListener('input', function () {
+    state.gradeIntensity = gradeSlider.value / 100;
+    renderPreview();
+  });
+
+  frameWidthSlider.addEventListener('input', function () {
+    state.frameWidth = Number(frameWidthSlider.value);
+    renderPreview();
+  });
+
+  captionInput.addEventListener('input', function () {
+    state.caption = captionInput.value;
+    renderPreview();
+  });
+
+  subCaptionInput.addEventListener('input', function () {
+    state.subCaption = subCaptionInput.value;
+    renderPreview();
+  });
+
+  function bindPhotoSlider(slider, apply) {
+    slider.addEventListener('input', function () {
+      var panel = selectedPanel();
+      if (!panel.photo) return;
+      apply(panel.photo, Number(slider.value));
+      renderPreview();
+    });
+  }
+
+  bindPhotoSlider(zoomSlider, function (photo, v) { photo.zoom = v / 100; });
+  bindPhotoSlider(shiftXSlider, function (photo, v) { photo.ox = v / 100; });
+  bindPhotoSlider(shiftYSlider, function (photo, v) { photo.oy = v / 100; });
+
+  /* ---------- Photos: load, drop, drag ---------- */
+
+  function loadPhotoFile(file) {
+    if (!file || file.type.indexOf('image/') !== 0) {
+      setStatus('That file is not an image. Try a JPG or PNG photo.');
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      var img = new Image();
+      img.onload = function () {
+        var panel = selectedPanel();
+        panel.photo = { img: img, zoom: 1, ox: 0, oy: 0 };
+        refreshAll();
+        setStatus('Photo loaded into panel ' + (state.selected + 1) +
+          '. Drag it to reposition, or export when ready.');
+      };
+      img.onerror = function () { setStatus('Could not read that image file.'); };
+      img.src = reader.result;
+    };
+    reader.onerror = function () { setStatus('Could not read that file.'); };
+    reader.readAsDataURL(file);
+  }
+
+  $('loadPhotoBtn').addEventListener('click', function () { filePicker.click(); });
+  filePicker.addEventListener('change', function () {
+    loadPhotoFile(filePicker.files[0]);
+    filePicker.value = '';
+  });
+
+  $('swapBackdropBtn').addEventListener('click', function () {
+    var panel = selectedPanel();
+    var next = BACKDROP_ORDER[(BACKDROP_ORDER.indexOf(panel.backdrop) + 1) % BACKDROP_ORDER.length];
+    panel.backdrop = next;
+    refreshAll();
+    setStatus('Backdrop: ' + BACKDROP_LABELS[next] + '.');
+  });
+
+  $('clearPhotoBtn').addEventListener('click', function () {
+    var panel = selectedPanel();
+    if (!panel.photo) { setStatus('Panel ' + (state.selected + 1) + ' has no photo to clear.'); return; }
+    panel.photo = null;
+    refreshAll();
+    setStatus('Photo cleared from panel ' + (state.selected + 1) + '. Backdrop restored.');
+  });
+
+  function canvasPoint(event) {
+    var rect = stage.getBoundingClientRect();
+    return {
+      x: (event.clientX - rect.left) * (stage.width / rect.width),
+      y: (event.clientY - rect.top) * (stage.height / rect.height)
+    };
+  }
+
+  function panelAt(point) {
+    var rects = panelRectsFor(state.layout, stage.width, stage.height, gapFor(stage.width));
+    for (var i = 0; i < visiblePanels(); i++) {
+      var r = rects[i];
+      if (point.x >= r.x && point.x <= r.x + r.w && point.y >= r.y && point.y <= r.y + r.h) return i;
+    }
+    return -1;
+  }
+
+  var drag = null;
+
+  stage.addEventListener('pointerdown', function (event) {
+    var point = canvasPoint(event);
+    var hit = panelAt(point);
+    if (hit < 0) return;
+    state.selected = hit;
+    refreshPanelSummary();
+    renderPreview();
+    var panel = selectedPanel();
+    if (panel.photo) {
+      var rects = panelRectsFor(state.layout, stage.width, stage.height, gapFor(stage.width));
+      var r = rects[hit];
+      var img = panel.photo.img;
+      var iw = img.naturalWidth || img.width;
+      var ih = img.naturalHeight || img.height;
+      var scale = Math.max(r.w / iw, r.h / ih) * panel.photo.zoom;
+      drag = {
+        startX: point.x, startY: point.y,
+        ox: panel.photo.ox, oy: panel.photo.oy,
+        spanX: Math.max(1, iw * scale - r.w),
+        spanY: Math.max(1, ih * scale - r.h)
+      };
+      stage.setPointerCapture(event.pointerId);
     }
   });
-  applyGrade(ctx, W, H);
-  drawCaption(ctx, W, H);
-}
 
-/* ---------- editor wiring ---------- */
-const canvas = document.getElementById('cover');
-const ctx = canvas.getContext('2d');
-const statusEl = document.getElementById('status');
-const selNameEl = document.getElementById('sel-name');
-const zoomEl = document.getElementById('zoom');
-const shiftXEl = document.getElementById('shift-x');
-const shiftYEl = document.getElementById('shift-y');
-const fileEl = document.getElementById('photo-file');
-
-function setStatus(msg) { statusEl.textContent = msg; }
-
-function render() {
-  renderCover(ctx, canvas.width, canvas.height, false);
-}
-
-function syncPanelControls() {
-  const def = LAYOUTS[state.layout].panels[state.selected];
-  const panel = state.panels[state.selected];
-  selNameEl.textContent = `Panel ${state.selected + 1} — ${def.name} · backdrop: ${BACKDROP_NAMES[panel.backdrop]}${panel.img ? ' · photo loaded' : ''}`;
-  zoomEl.value = Math.round(panel.zoom * 100);
-  shiftXEl.value = Math.round(panel.ox * 100);
-  shiftYEl.value = Math.round(panel.oy * 100);
-}
-
-function selectPanel(idx) {
-  state.selected = Math.max(0, Math.min(idx, LAYOUTS[state.layout].panels.length - 1));
-  syncPanelControls();
-  render();
-}
-
-function markChips(rowEl, attr, value) {
-  rowEl.querySelectorAll('.chip').forEach((chip) => {
-    chip.classList.toggle('is-on', chip.dataset[attr] === value);
+  stage.addEventListener('pointermove', function (event) {
+    if (!drag) return;
+    var panel = selectedPanel();
+    if (!panel.photo) { drag = null; return; }
+    var point = canvasPoint(event);
+    panel.photo.ox = clamp(drag.ox + 2 * (point.x - drag.startX) / drag.spanX, -1, 1);
+    panel.photo.oy = clamp(drag.oy + 2 * (point.y - drag.startY) / drag.spanY, -1, 1);
+    refreshPanelSummary();
+    renderPreview();
   });
-}
 
-function setAspect(w, h) {
-  aspect = { w, h };
-  const scale = 1080 / Math.max(w, h);
-  canvas.width = Math.round(w * scale);
-  canvas.height = Math.round(h * scale);
-  render();
-}
+  stage.addEventListener('pointerup', function () { drag = null; });
+  stage.addEventListener('pointercancel', function () { drag = null; });
 
-/* layout + grade + lettering chips */
-document.getElementById('layout-row').addEventListener('click', (ev) => {
-  const btn = ev.target.closest('[data-layout]');
-  if (!btn) return;
-  state.layout = btn.dataset.layout;
-  markChips(ev.currentTarget, 'layout', state.layout);
-  selectPanel(Math.min(state.selected, LAYOUTS[state.layout].panels.length - 1));
-});
-document.getElementById('grade-row').addEventListener('click', (ev) => {
-  const btn = ev.target.closest('[data-grade]');
-  if (!btn) return;
-  state.grade = btn.dataset.grade;
-  markChips(ev.currentTarget, 'grade', state.grade);
-  render();
-});
-document.getElementById('letter-row').addEventListener('click', (ev) => {
-  const btn = ev.target.closest('[data-letter]');
-  if (!btn) return;
-  state.letter = btn.dataset.letter;
-  markChips(ev.currentTarget, 'letter', state.letter);
-  render();
-});
+  stage.addEventListener('dblclick', function (event) {
+    var hit = panelAt(canvasPoint(event));
+    if (hit >= 0) { state.selected = hit; refreshPanelSummary(); filePicker.click(); }
+  });
 
-/* caption text */
-document.getElementById('caption').addEventListener('input', (ev) => { state.caption = ev.target.value; render(); });
-document.getElementById('subcaption').addEventListener('input', (ev) => { state.subcaption = ev.target.value; render(); });
-document.getElementById('intensity').addEventListener('input', (ev) => { state.intensity = ev.target.value / 100; render(); });
+  stage.addEventListener('dragover', function (event) { event.preventDefault(); });
+  stage.addEventListener('drop', function (event) {
+    event.preventDefault();
+    var hit = panelAt(canvasPoint(event));
+    if (hit >= 0) state.selected = hit;
+    if (event.dataTransfer.files.length) loadPhotoFile(event.dataTransfer.files[0]);
+  });
 
-/* selected panel controls */
-zoomEl.addEventListener('input', () => { state.panels[state.selected].zoom = zoomEl.value / 100; render(); });
-shiftXEl.addEventListener('input', () => { state.panels[state.selected].ox = shiftXEl.value / 100; render(); });
-shiftYEl.addEventListener('input', () => { state.panels[state.selected].oy = shiftYEl.value / 100; render(); });
-document.getElementById('clear-photo').addEventListener('click', () => {
-  state.panels[state.selected].img = null;
-  syncPanelControls();
-  render();
-});
-document.getElementById('cycle-backdrop').addEventListener('click', () => {
-  const panel = state.panels[state.selected];
-  const next = BACKDROPS[(BACKDROPS.indexOf(panel.backdrop) + 1) % BACKDROPS.length];
-  panel.backdrop = next;
-  syncPanelControls();
-  render();
-});
-document.getElementById('load-photo').addEventListener('click', () => fileEl.click());
+  document.addEventListener('keydown', function (event) {
+    var tag = (event.target && event.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    var panel = selectedPanel();
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      if (panel.photo) {
+        panel.photo = null;
+        refreshAll();
+        setStatus('Photo cleared from panel ' + (state.selected + 1) + '.');
+      }
+      return;
+    }
+    if (!panel.photo) return;
+    var step = 0.03;
+    if (event.key === 'ArrowLeft') { panel.photo.ox = clamp(panel.photo.ox - step, -1, 1); }
+    else if (event.key === 'ArrowRight') { panel.photo.ox = clamp(panel.photo.ox + step, -1, 1); }
+    else if (event.key === 'ArrowUp') { panel.photo.oy = clamp(panel.photo.oy - step, -1, 1); }
+    else if (event.key === 'ArrowDown') { panel.photo.oy = clamp(panel.photo.oy + step, -1, 1); }
+    else return;
+    event.preventDefault();
+    refreshAll();
+  });
 
-function loadPhotoInto(idx, file) {
-  if (!file || !file.type.startsWith('image/')) return;
-  const url = URL.createObjectURL(file);
-  const img = new Image();
-  img.onload = () => {
-    state.panels[idx].img = img;
-    state.panels[idx].zoom = 1;
-    state.panels[idx].ox = 0;
-    state.panels[idx].oy = 0;
-    selectPanel(idx);
-    setStatus(`Photo loaded into panel ${idx + 1}. Drag it to reposition, or export when ready.`);
-  };
-  img.onerror = () => setStatus('That file could not be read as an image.');
-  img.src = url;
-}
-fileEl.addEventListener('change', () => {
-  loadPhotoInto(state.selected, fileEl.files[0]);
-  fileEl.value = '';
-});
+  /* ---------- Surprise, reset, export ---------- */
 
-/* canvas: click to select, drag to reposition */
-function canvasPoint(ev) {
-  const r = canvas.getBoundingClientRect();
-  return {
-    x: (ev.clientX - r.left) * (canvas.width / r.width),
-    y: (ev.clientY - r.top) * (canvas.height / r.height),
-  };
-}
-function panelAt(x, y) {
-  const layout = LAYOUTS[state.layout];
-  for (let i = layout.panels.length - 1; i >= 0; i--) {
-    const [fx, fy, fw, fh] = layout.panels[i].rect;
-    if (x >= fx * canvas.width && x <= (fx + fw) * canvas.width && y >= fy * canvas.height && y <= (fy + fh) * canvas.height) return i;
+  function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
+
+  function markChip(rowId, attr, value) {
+    var chips = $(rowId).querySelectorAll('.chip');
+    for (var i = 0; i < chips.length; i++) {
+      chips[i].classList.toggle('is-active', chips[i].getAttribute('data-' + attr) === value);
+    }
   }
-  return 0;
-}
-let drag = null;
-canvas.addEventListener('pointerdown', (ev) => {
-  const p = canvasPoint(ev);
-  const idx = panelAt(p.x, p.y);
-  selectPanel(idx);
-  const panel = state.panels[idx];
-  drag = { x: p.x, y: p.y, ox: panel.ox, oy: panel.oy };
-  canvas.setPointerCapture(ev.pointerId);
-});
-canvas.addEventListener('pointermove', (ev) => {
-  if (!drag) return;
-  const p = canvasPoint(ev);
-  const def = LAYOUTS[state.layout].panels[state.selected];
-  const panel = state.panels[state.selected];
-  if (!panel.img) return;
-  panel.ox = Math.max(-0.6, Math.min(0.6, drag.ox + (p.x - drag.x) / (def.rect[2] * canvas.width)));
-  panel.oy = Math.max(-0.6, Math.min(0.6, drag.oy + (p.y - drag.y) / (def.rect[3] * canvas.height)));
-  shiftXEl.value = Math.round(panel.ox * 100);
-  shiftYEl.value = Math.round(panel.oy * 100);
-  render();
-});
-canvas.addEventListener('pointerup', () => { drag = null; });
-canvas.addEventListener('dblclick', (ev) => {
-  selectPanel(panelAt(...(() => { const p = canvasPoint(ev); return [p.x, p.y]; })()));
-  fileEl.click();
-});
 
-/* drag & drop photos onto panels */
-const stageEl = document.getElementById('stage');
-['dragenter', 'dragover'].forEach((name) => stageEl.addEventListener(name, (ev) => {
-  ev.preventDefault();
-  stageEl.classList.add('dragging');
-}));
-['dragleave', 'drop'].forEach((name) => stageEl.addEventListener(name, (ev) => {
-  ev.preventDefault();
-  stageEl.classList.remove('dragging');
-}));
-stageEl.addEventListener('drop', (ev) => {
-  const file = ev.dataTransfer.files && ev.dataTransfer.files[0];
-  if (!file) return;
-  const r = canvas.getBoundingClientRect();
-  const x = (ev.clientX - r.left) * (canvas.width / r.width);
-  const y = (ev.clientY - r.top) * (canvas.height / r.height);
-  loadPhotoInto(panelAt(x, y), file);
-});
+  $('surpriseBtn').addEventListener('click', function () {
+    state.layout = pick(Object.keys(LAYOUTS));
+    state.grade = pick(Object.keys(GRADES));
+    state.captionStyle = pick(Object.keys(CAPTION_STYLES));
+    state.frame = pick(Object.keys(FRAME_STYLES));
+    state.gradeIntensity = 0.6 + Math.random() * 0.4;
+    gradeSlider.value = Math.round(state.gradeIntensity * 100);
+    for (var i = 0; i < state.panels.length; i++) {
+      state.panels[i].backdrop = pick(BACKDROP_ORDER);
+    }
+    state.selected = 0;
+    markChip('layoutRow', 'layout', state.layout);
+    markChip('gradeRow', 'grade', state.grade);
+    markChip('captionStyleRow', 'caption-style', state.captionStyle);
+    markChip('frameRow', 'frame', state.frame);
+    refreshAll();
+    setStatus('Surprise! Layout, grade, backdrops and frame shuffled — photos kept.');
+  });
 
-/* keyboard: delete clears, arrows nudge */
-document.addEventListener('keydown', (ev) => {
-  if (ev.target.tagName === 'INPUT' && ev.target.type === 'text') return;
-  const panel = state.panels[state.selected];
-  if (ev.key === 'Delete' || ev.key === 'Backspace') {
-    panel.img = null;
-    syncPanelControls();
-    render();
-  } else if (ev.key.startsWith('Arrow')) {
-    const step = ev.shiftKey ? 0.05 : 0.015;
-    if (ev.key === 'ArrowLeft') panel.ox -= step;
-    if (ev.key === 'ArrowRight') panel.ox += step;
-    if (ev.key === 'ArrowUp') panel.oy -= step;
-    if (ev.key === 'ArrowDown') panel.oy += step;
-    panel.ox = Math.max(-0.6, Math.min(0.6, panel.ox));
-    panel.oy = Math.max(-0.6, Math.min(0.6, panel.oy));
-    shiftXEl.value = Math.round(panel.ox * 100);
-    shiftYEl.value = Math.round(panel.oy * 100);
-    render();
-    ev.preventDefault();
-  }
-});
+  $('resetBtn').addEventListener('click', function () {
+    var keepPhotos = state.panels.map(function (p) { return p.photo; });
+    state = defaultState();
+    for (var i = 0; i < keepPhotos.length; i++) state.panels[i].photo = keepPhotos[i];
+    gradeSlider.value = 85;
+    frameWidthSlider.value = 9;
+    captionInput.value = state.caption;
+    subCaptionInput.value = state.subCaption;
+    markChip('layoutRow', 'layout', state.layout);
+    markChip('gradeRow', 'grade', state.grade);
+    markChip('captionStyleRow', 'caption-style', state.captionStyle);
+    markChip('captionPlaceRow', 'caption-place', state.captionPlace);
+    markChip('frameRow', 'frame', state.frame);
+    markChip('sizeRow', 'size', state.exportSize);
+    refreshAll();
+    setStatus('Reset to the default cover. Your photos were kept.');
+  });
 
-/* randomize + reset */
-document.getElementById('randomize').addEventListener('click', () => {
-  const rnd = Math.random;
-  const layouts = Object.keys(LAYOUTS);
-  state.layout = layouts[Math.floor(rnd() * layouts.length)];
-  const grades = Object.keys(GRADES);
-  state.grade = grades[Math.floor(rnd() * grades.length)];
-  state.intensity = 0.45 + rnd() * 0.55;
-  const letters = Object.keys(LETTER_STYLES);
-  state.letter = letters[Math.floor(rnd() * letters.length)];
-  const shuffled = [...BACKDROPS].sort(() => rnd() - 0.5);
-  state.panels.forEach((panel, i) => { panel.backdrop = shuffled[i % shuffled.length]; });
-  document.getElementById('intensity').value = Math.round(state.intensity * 100);
-  markChips(document.getElementById('layout-row'), 'layout', state.layout);
-  markChips(document.getElementById('grade-row'), 'grade', state.grade);
-  markChips(document.getElementById('letter-row'), 'letter', state.letter);
-  selectPanel(Math.min(state.selected, LAYOUTS[state.layout].panels.length - 1));
-  setStatus('New mix: layout, grade and backdrops shuffled. Your photos stayed put.');
-});
-document.getElementById('reset').addEventListener('click', () => {
-  const photos = state.panels.map((p) => p.img);
-  state = defaultState();
-  state.panels.forEach((p, i) => { p.img = photos[i] || null; });
-  document.getElementById('caption').value = state.caption;
-  document.getElementById('subcaption').value = state.subcaption;
-  document.getElementById('intensity').value = Math.round(state.intensity * 100);
-  markChips(document.getElementById('layout-row'), 'layout', state.layout);
-  markChips(document.getElementById('grade-row'), 'grade', state.grade);
-  markChips(document.getElementById('letter-row'), 'letter', state.letter);
-  selectPanel(0);
-  setStatus('Back to the classic Vice Heat composition.');
-});
+  $('exportBtn').addEventListener('click', function () {
+    var size = EXPORT_SIZES[state.exportSize];
+    var off = document.createElement('canvas');
+    off.width = size.w;
+    off.height = size.h;
+    renderCover(off.getContext('2d'), size.w, size.h);
+    off.toBlob(function (blob) {
+      if (!blob) { setStatus('Export failed — the browser could not render the PNG.'); return; }
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'vice-heat-' + size.w + 'x' + size.h + '.png';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+      setStatus('Exported ' + size.w + ' \u00d7 ' + size.h + ' PNG. Share it anywhere.');
+    }, 'image/png');
+  });
 
-/* export at full size, offscreen */
-function exportPng(w, h) {
-  setAspect(w, h);
-  const off = document.createElement('canvas');
-  off.width = w;
-  off.height = h;
-  renderCover(off.getContext('2d'), w, h, true);
-  off.toBlob((blob) => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `vice-heat-cover-${w}x${h}.png`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-    setStatus(`Exported a ${w} × ${h} PNG — check your downloads.`);
-  }, 'image/png');
-}
-document.getElementById('export-45').addEventListener('click', () => exportPng(1080, 1350));
-document.getElementById('export-11').addEventListener('click', () => exportPng(1080, 1080));
-document.getElementById('export-169').addEventListener('click', () => exportPng(1920, 1080));
+  /* ---------- Start ---------- */
 
-/* go */
-syncPanelControls();
-render();
-window.__appReady = true;
+  refreshAll();
+})();
